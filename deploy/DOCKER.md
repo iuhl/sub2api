@@ -72,4 +72,4 @@ volumes:
 
 - [GitHub Repository](https://github.com/iuhl/sub2api)
 - [GHCR Package](https://github.com/iuhl/sub2api/pkgs/container/sub2api)
-- [Documentation](https://github.com/iuhl/sub2api#readme)
+- [Documentation](https://github.com/iuhl/sub2api/blob/main/deploy/DOCKER.md)
