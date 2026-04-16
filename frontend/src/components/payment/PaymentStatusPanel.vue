@@ -84,6 +84,9 @@
             </div>
           </div>
           <p v-if="scanHint" class="text-center text-sm text-gray-500 dark:text-gray-400">{{ scanHint }}</p>
+          <button v-if="showFallbackPayButton" class="btn btn-secondary text-sm" @click="reopenPopup">
+            {{ t('payment.qr.openPayWindow') }}
+          </button>
         </div>
       </div>
       <div class="card p-4 text-center">
@@ -102,7 +105,7 @@
         <div class="flex flex-col items-center space-y-4 py-4">
           <div class="h-10 w-10 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
           <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('payment.qr.payInNewWindowHint') }}</p>
-          <button v-if="payUrl" class="btn btn-secondary text-sm" @click="reopenPopup">
+          <button v-if="showFallbackPayButton" class="btn btn-secondary text-sm" @click="reopenPopup">
             {{ t('payment.qr.openPayWindow') }}
           </button>
         </div>
@@ -185,6 +188,8 @@ const scanHint = computed(() => {
   if (isWxpay.value) return t('payment.qr.scanWxpayHint')
   return ''
 })
+
+const showFallbackPayButton = computed(() => Boolean(props.payUrl))
 
 const countdownDisplay = computed(() => {
   const m = Math.floor(remainingSeconds.value / 60)
