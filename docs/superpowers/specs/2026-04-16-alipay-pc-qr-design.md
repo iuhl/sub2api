@@ -1,142 +1,142 @@
-# Alipay PC QR Repair Design
+# 支付宝 PC 二维码修复设计
 
-Date: 2026-04-16
+日期：2026-04-16
 
-## Summary
+## 概述
 
-Fix the current PC-side Alipay checkout flow so that:
+修复当前 PC 端支付宝结账流程，使其满足以下目标：
 
-- The inline QR code is a real Alipay scan-to-pay code instead of a QR rendering of the `alipay.trade.page.pay` page URL.
-- The checkout dialog still exposes a fallback button that opens the Alipay PC cashier page in a popup or new window.
-- Mobile Alipay behavior remains unchanged and continues to use the existing H5/WAP redirect flow.
+- 页面内展示的二维码是真正的支付宝扫码支付码，而不是把 `alipay.trade.page.pay` 返回的页面地址再次转成二维码。
+- 结账弹窗仍然保留一个兜底按钮，用于打开支付宝 PC 收银台页面，支持弹窗或新窗口支付。
+- 移动端支付宝行为保持不变，继续沿用现有的 H5/WAP 跳转流程。
 
-## Current Problem
+## 当前问题
 
-The current desktop Alipay provider implementation calls `alipay.trade.page.pay` and writes the returned page URL into both `pay_url` and `qr_code`.
+当前桌面端支付宝 provider 调用的是 `alipay.trade.page.pay`，并把返回的页面地址同时写入 `pay_url` 和 `qr_code`。
 
-That creates an invalid product behavior:
+这会带来错误的产品行为：
 
-- Frontend components treat `qr_code` as raw QR payload and render it into a canvas.
-- The rendered QR therefore points to the Alipay web cashier page.
-- Users who scan with Alipay are redirected into a web payment page and may need to enter a password in the web flow instead of going through the native in-app scan payment experience.
+- 前端组件把 `qr_code` 当作原始二维码内容，直接渲染到 canvas。
+- 因此最终显示出来的二维码，实际指向的是支付宝网页收银台地址。
+- 用户使用支付宝扫码后，会跳进网页支付流程，可能需要在网页中输密码，而不是走支付宝原生 App 内扫码支付体验。
 
-## Goals
+## 目标
 
-- Desktop Alipay orders return both:
-  - a native scan QR payload
-  - a fallback cashier URL
-- The payment dialog shows both the QR code and a fallback "open cashier" action at the same time.
-- Existing payment polling, order lifecycle, webhook handling, and mobile Alipay flows continue to work without behavioral regression.
+- 桌面端支付宝订单同时返回：
+  - 一个原生扫码二维码内容
+  - 一个备用的收银台页面地址
+- 支付弹窗同时展示二维码和“打开收银台”的兜底操作。
+- 现有的支付轮询、订单生命周期、Webhook 处理以及移动端支付宝流程不发生行为回归。
 
-## Non-Goals
+## 非目标
 
-- No change to WeChat Pay behavior.
-- No change to Stripe behavior.
-- No attempt to force-launch Alipay app from desktop browsers with custom scheme hacks.
-- No change to payment configuration UI or provider instance schema.
+- 不修改微信支付行为。
+- 不修改 Stripe 行为。
+- 不尝试在桌面浏览器里通过自定义 scheme 或 hack 强制唤起支付宝 App。
+- 不修改支付配置界面，也不修改 provider 实例的数据结构。
 
-## Recommended Approach
+## 推荐方案
 
-### Backend
+### 后端
 
-Update the Alipay direct provider in [backend/internal/payment/provider/alipay.go](/Users/iuh/IdeaProjects/GithubProjects/sub2api/backend/internal/payment/provider/alipay.go).
+更新支付宝直连 provider：[backend/internal/payment/provider/alipay.go](/Users/iuh/IdeaProjects/GithubProjects/sub2api/backend/internal/payment/provider/alipay.go)。
 
-For `req.IsMobile == true`:
+对于 `req.IsMobile == true`：
 
-- Keep the existing `alipay.trade.wap.pay` flow.
-- Return `pay_url` only.
+- 保持现有 `alipay.trade.wap.pay` 流程不变。
+- 仅返回 `pay_url`。
 
-For desktop (`req.IsMobile == false`):
+对于桌面端 `req.IsMobile == false`：
 
-- Generate a fallback cashier URL with `alipay.trade.page.pay` and return it as `pay_url`.
-- Generate the QR payload with Alipay precreate and return the upstream `qr_code` as `qr_code`.
-- Keep the same order identifiers, amount, subject, notify URL, and return URL for both calls so order tracking remains consistent.
+- 使用 `alipay.trade.page.pay` 生成备用收银台地址，并返回到 `pay_url`。
+- 使用支付宝预下单能力生成扫码二维码内容，并将上游返回的 `qr_code` 写入 `qr_code`。
+- 两次调用使用相同的订单号、金额、商品标题、异步通知地址和同步跳转地址，确保订单跟踪口径一致。
 
-This changes the desktop response shape from "one page URL reused twice" to "one native QR payload plus one cashier page URL".
+这样桌面端返回结果会从“同一个页面地址复用两次”，改为“一个原生二维码内容 + 一个收银台页面地址”。
 
-### Frontend
+### 前端
 
-Update the payment waiting UI so QR and fallback link are not mutually exclusive.
+调整支付等待态 UI，让二维码和备用链接不再互斥。
 
-Files expected to change:
+预计会修改的文件：
 
 - [frontend/src/components/payment/PaymentQRDialog.vue](/Users/iuh/IdeaProjects/GithubProjects/sub2api/frontend/src/components/payment/PaymentQRDialog.vue)
 - [frontend/src/components/payment/PaymentStatusPanel.vue](/Users/iuh/IdeaProjects/GithubProjects/sub2api/frontend/src/components/payment/PaymentStatusPanel.vue)
-- [frontend/src/views/user/PaymentQRCodeView.vue](/Users/iuh/IdeaProjects/GithubProjects/sub2api/frontend/src/views/user/PaymentQRCodeView.vue) if this legacy page is still used
+- [frontend/src/views/user/PaymentQRCodeView.vue](/Users/iuh/IdeaProjects/GithubProjects/sub2api/frontend/src/views/user/PaymentQRCodeView.vue)，如果这个旧页面仍在使用
 
-Required UI behavior:
+必须满足的 UI 行为：
 
-- If `qr_code` exists, render the QR canvas exactly as before.
-- If `pay_url` also exists, still show the existing fallback button below or alongside the QR section.
-- Keep countdown, cancel, and polling logic unchanged.
-- Keep popup reopening behavior unchanged for the fallback button.
+- 当存在 `qr_code` 时，继续按现有方式渲染二维码 canvas。
+- 当同时存在 `pay_url` 时，仍然显示现有的兜底按钮，位置可以在二维码区域下方或旁边。
+- 倒计时、取消订单、支付轮询逻辑保持不变。
+- 备用按钮触发的弹窗重开逻辑保持不变。
 
-### Data Contract
+### 数据契约
 
-No API field additions are required.
+不需要新增 API 字段。
 
-Existing fields already support the target behavior:
+现有字段已经足够承载目标行为：
 
-- `qr_code`: now contains the real Alipay scan QR payload on desktop
-- `pay_url`: contains the desktop cashier page URL
+- `qr_code`：桌面端改为承载真正的支付宝扫码二维码内容
+- `pay_url`：承载桌面端收银台页面地址
 
-`CreateOrderResult` stays structurally unchanged.
+`CreateOrderResult` 的结构保持不变。
 
-## Error Handling
+## 错误处理
 
-- If desktop Alipay precreate fails, the order creation should fail rather than silently degrade back to the broken QR behavior.
-- If the cashier page URL generation fails, the order creation should also fail, because the approved design requires both desktop paths.
-- Existing webhook and query-order handling remain unchanged because payment confirmation is still keyed by the same `out_trade_no`.
+- 如果桌面端支付宝预下单失败，应直接让创建订单失败，而不是静默退化回当前错误的二维码行为。
+- 如果收银台地址生成失败，也应让创建订单失败，因为已确认的设计要求桌面端必须同时提供两条路径。
+- 现有的 Webhook 和查单逻辑保持不变，因为支付确认仍然依赖同一个 `out_trade_no`。
 
-## Testing
+## 测试
 
-### Backend Tests
+### 后端测试
 
-Add provider-level tests for Alipay:
+为支付宝 provider 增加测试：
 
-- Mobile request returns only `pay_url`.
-- Desktop request returns both `qr_code` and `pay_url`.
-- Desktop `qr_code` is sourced from precreate, not copied from `pay_url`.
+- 移动端请求仅返回 `pay_url`。
+- 桌面端请求同时返回 `qr_code` 和 `pay_url`。
+- 桌面端的 `qr_code` 必须来自预下单结果，不能再从 `pay_url` 复制。
 
-Prefer isolating SDK calls behind minimal stubbing seams in the provider test so the test asserts behavior, not SDK internals.
+测试实现上，优先通过最小化的 stub seam 隔离 SDK 调用，让测试关注行为本身，而不是 SDK 内部细节。
 
-### Frontend Tests
+### 前端测试
 
-Add or update component tests so that:
+新增或更新组件测试，覆盖以下场景：
 
-- QR remains visible when `qrCode` is present.
-- Fallback button is also visible when both `qrCode` and `payUrl` are present.
-- Popup-only mode still works when `qrCode` is absent and `payUrl` is present.
+- 传入 `qrCode` 时，二维码仍然可见。
+- 同时传入 `qrCode` 和 `payUrl` 时，兜底按钮也可见。
+- 仅有 `payUrl`、没有 `qrCode` 时，纯弹窗模式仍然正常工作。
 
-## Risks and Mitigations
+## 风险与缓解
 
-### Risk: desktop branch now performs two upstream calls
+### 风险：桌面端分支变为两次上游调用
 
-Mitigation:
+缓解方式：
 
-- Keep the logic constrained to Alipay desktop only.
-- Reuse the same request parameters across both calls.
-- Add focused tests around desktop response composition.
+- 仅在支付宝桌面端路径中使用该逻辑，不扩大影响面。
+- 两次调用复用同一套请求参数。
+- 增加聚焦桌面端响应组合逻辑的测试。
 
-### Risk: frontend layout regression when QR and fallback button coexist
+### 风险：二维码与兜底按钮并存后引发前端布局回归
 
-Mitigation:
+缓解方式：
 
-- Keep the existing layout and only remove the mutual exclusion that hides the button in QR mode.
-- Cover the combined state in component tests.
+- 尽量保持现有布局，仅移除“二维码模式下隐藏按钮”的互斥逻辑。
+- 使用组件测试覆盖二维码与按钮共存状态。
 
-## Implementation Outline
+## 实施大纲
 
-1. Add desktop Alipay response composition in the provider.
-2. Add failing tests for desktop/mobile provider behavior.
-3. Update payment UI components to render QR and fallback action together.
-4. Add frontend tests for the combined state.
-5. Verify targeted backend and frontend test suites.
+1. 在 provider 中补齐桌面端支付宝响应组合逻辑。
+2. 先补桌面端与移动端行为的失败测试。
+3. 更新支付 UI 组件，使二维码与兜底操作同时展示。
+4. 增加前端组合状态测试。
+5. 验证针对性的后端与前端测试集。
 
-## Acceptance Criteria
+## 验收标准
 
-- On desktop, creating an Alipay order returns both a valid `qr_code` and a valid `pay_url`.
-- The user-facing payment dialog displays the QR code and an "open cashier" fallback button together.
-- Scanning the QR code no longer routes users into the current broken web-password flow caused by QR-encoding the page-pay URL.
-- Mobile Alipay orders still redirect through the existing H5/WAP path.
-- Existing order polling and payment completion flow continue to work.
+- 在桌面端创建支付宝订单时，同时返回有效的 `qr_code` 和 `pay_url`。
+- 用户侧支付弹窗同时展示二维码和“打开收银台”兜底按钮。
+- 用户扫码后，不再进入当前这种由页面支付地址转二维码导致的网页输密码流程。
+- 移动端支付宝订单仍然沿用现有 H5/WAP 跳转路径。
+- 现有订单轮询与支付完成流程继续正常工作。
