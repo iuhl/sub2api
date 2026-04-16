@@ -284,6 +284,7 @@ import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
 import StripePaymentInline from '@/components/payment/StripePaymentInline.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
+import { buildPaymentTransition, type PaymentSessionState } from './paymentFlow'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -311,21 +312,25 @@ const previewImage = ref('')
 
 // Payment phase: 'select' → 'paying' (QR/redirect) or 'stripe' (inline Stripe)
 const paymentPhase = ref<'select' | 'paying' | 'stripe'>('select')
-const paymentState = ref<{
-  orderId: number
-  amount: number
-  qrCode: string
-  expiresAt: string
-  paymentType: string
-  payUrl: string
-  clientSecret: string
-  payAmount: number
-  orderType: OrderType | ''
-}>({ orderId: 0, amount: 0, qrCode: '', expiresAt: '', paymentType: '', payUrl: '', clientSecret: '', payAmount: 0, orderType: '' })
+function createEmptyPaymentState(): PaymentSessionState {
+  return {
+    orderId: 0,
+    amount: 0,
+    qrCode: '',
+    expiresAt: '',
+    paymentType: '',
+    payUrl: '',
+    clientSecret: '',
+    payAmount: 0,
+    orderType: '',
+  }
+}
+
+const paymentState = ref<PaymentSessionState>(createEmptyPaymentState())
 
 function resetPayment() {
   paymentPhase.value = 'select'
-  paymentState.value = { orderId: 0, amount: 0, qrCode: '', expiresAt: '', paymentType: '', payUrl: '', clientSecret: '', payAmount: 0, orderType: '' }
+  paymentState.value = createEmptyPaymentState()
 }
 
 function onPaymentDone() {
@@ -558,48 +563,33 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
         window.location.href = url
       }
     }
-    if (result.client_secret) {
-      // Stripe: show Payment Element inline (user picks method → confirms → redirect if needed)
-      paymentState.value = {
-        orderId: result.order_id, amount: result.amount, qrCode: '', expiresAt: result.expires_at || '',
-        paymentType: selectedMethod.value, payUrl: '',
-        clientSecret: result.client_secret, payAmount: result.pay_amount,
-        orderType,
-      }
-      paymentPhase.value = 'stripe'
-    } else if (isMobileDevice() && result.pay_url) {
-      // Mobile + pay_url: redirect directly instead of QR/popup (mobile browsers block popups)
-      paymentState.value = {
-        orderId: result.order_id, amount: result.amount, qrCode: '', expiresAt: result.expires_at || '',
-        paymentType: selectedMethod.value, payUrl: result.pay_url,
-        clientSecret: '', payAmount: 0,
-        orderType,
-      }
-      paymentPhase.value = 'paying'
-      window.location.href = result.pay_url
-      return
-    } else if (result.qr_code) {
-      // QR mode: show QR code inline
-      paymentState.value = {
-        orderId: result.order_id, amount: result.amount, qrCode: result.qr_code,
-        expiresAt: result.expires_at || '', paymentType: selectedMethod.value, payUrl: '',
-        clientSecret: '', payAmount: 0,
-        orderType,
-      }
-      paymentPhase.value = 'paying'
-    } else if (result.pay_url) {
-      // Redirect/popup mode: open payment URL, show waiting state inline
-      openWindow(result.pay_url)
-      paymentState.value = {
-        orderId: result.order_id, amount: result.amount, qrCode: '', expiresAt: result.expires_at || '',
-        paymentType: selectedMethod.value, payUrl: result.pay_url,
-        clientSecret: '', payAmount: 0,
-        orderType,
-      }
-      paymentPhase.value = 'paying'
-    } else {
+    const transition = buildPaymentTransition(result, {
+      isMobile: isMobileDevice(),
+      paymentType: selectedMethod.value,
+      orderType,
+    })
+    if (!transition) {
       errorMessage.value = t('payment.result.failed')
       appStore.showError(errorMessage.value)
+      return
+    }
+
+    paymentState.value = transition.state
+    if (transition.kind === 'stripe') {
+      // Stripe: show Payment Element inline (user picks method → confirms → redirect if needed)
+      paymentPhase.value = 'stripe'
+    } else if (transition.kind === 'redirect') {
+      // Mobile + pay_url: redirect directly instead of QR/popup (mobile browsers block popups)
+      paymentPhase.value = 'paying'
+      window.location.href = transition.url
+      return
+    } else if (transition.kind === 'popup') {
+      // Redirect/popup mode: open payment URL, show waiting state inline
+      openWindow(transition.url)
+      paymentPhase.value = 'paying'
+    } else {
+      // QR mode: show QR code inline, preserving pay_url as a fallback when present
+      paymentPhase.value = 'paying'
     }
   } catch (err: unknown) {
     const apiErr = err as Record<string, unknown>
