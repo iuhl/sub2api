@@ -20,7 +20,7 @@
         <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</p>
         <p class="mt-2 text-sm text-gray-400 dark:text-gray-500">{{ t('payment.qr.waitingPayment') }}</p>
       </div>
-      <a v-if="payUrl && !qrUrl && !expired" :href="payUrl" target="_blank" rel="noopener noreferrer"
+      <a v-if="payUrl && !expired" :href="payUrl" target="_blank" rel="noopener noreferrer"
         class="btn btn-primary w-full py-3">
         {{ t('payment.qr.openPayWindow') }}
       </a>
