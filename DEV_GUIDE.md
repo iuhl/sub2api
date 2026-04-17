@@ -265,9 +265,9 @@ psql -U sub2api -h 127.0.0.1 -d sub2api -f migration.sql
 
 ```bash
 # 同步上游
-git fetch upstream
+git fetch --all --prune
 git checkout main
-git merge upstream/main
+git merge --no-ff upstream/main
 git push origin main
 
 # 创建功能分支
@@ -277,6 +277,10 @@ git checkout -b feature/xxx
 git fetch upstream
 git rebase upstream/main
 ```
+
+说明：
+- `git merge --no-ff upstream/main` 是当前 fork 同步上游时推荐使用的合并命令。
+- 这样会保留一次明确的合并提交，不会改写你 fork 上已经存在的提交历史。
 
 ### 前端操作
 
