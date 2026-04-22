@@ -27,6 +27,15 @@ const (
 	alipayRefundSuffix     = "-refund"
 )
 
+var (
+	alipayTradeWapPay = func(client *alipay.Client, param alipay.TradeWapPay) (*url.URL, error) {
+		return client.TradeWapPay(param)
+	}
+	alipayTradePagePay = func(client *alipay.Client, param alipay.TradePagePay) (*url.URL, error) {
+		return client.TradePagePay(param)
+	}
+)
+
 // Alipay implements payment.Provider and payment.CancelableProvider using the smartwalle/alipay SDK.
 type Alipay struct {
 	instanceID string
@@ -92,6 +101,17 @@ func (a *Alipay) Name() string        { return "Alipay" }
 func (a *Alipay) ProviderKey() string { return payment.TypeAlipay }
 func (a *Alipay) SupportedTypes() []payment.PaymentType {
 	return []payment.PaymentType{payment.TypeAlipay}
+}
+
+func (a *Alipay) MerchantIdentityMetadata() map[string]string {
+	if a == nil {
+		return nil
+	}
+	appID := strings.TrimSpace(a.config["appId"])
+	if appID == "" {
+		return nil
+	}
+	return map[string]string{"app_id": appID}
 }
 
 // CreatePayment creates an Alipay payment flow:
@@ -177,6 +197,44 @@ func (a *Alipay) createDesktopTrade(ctx context.Context, gateway alipayPaymentGa
 	}, nil
 }
 
+func (a *Alipay) createWapTrade(client *alipay.Client, req payment.CreatePaymentRequest, notifyURL, returnURL string) (*payment.CreatePaymentResponse, error) {
+	param := alipay.TradeWapPay{}
+	param.OutTradeNo = req.OrderID
+	param.TotalAmount = req.Amount
+	param.Subject = req.Subject
+	param.ProductCode = alipayProductCodeWapPay
+	param.NotifyURL = notifyURL
+	param.ReturnURL = returnURL
+
+	payURL, err := alipayTradeWapPay(client, param)
+	if err != nil {
+		return nil, fmt.Errorf("alipay TradeWapPay: %w", err)
+	}
+	return &payment.CreatePaymentResponse{
+		TradeNo: req.OrderID,
+		PayURL:  payURL.String(),
+	}, nil
+}
+
+func (a *Alipay) createPagePayTrade(client *alipay.Client, req payment.CreatePaymentRequest, notifyURL, returnURL string) (*payment.CreatePaymentResponse, error) {
+	param := alipay.TradePagePay{}
+	param.OutTradeNo = req.OrderID
+	param.TotalAmount = req.Amount
+	param.Subject = req.Subject
+	param.ProductCode = alipayProductCodePagePay
+	param.NotifyURL = notifyURL
+	param.ReturnURL = returnURL
+
+	payURL, err := alipayTradePagePay(client, param)
+	if err != nil {
+		return nil, fmt.Errorf("alipay TradePagePay: %w", err)
+	}
+	return &payment.CreatePaymentResponse{
+		TradeNo: req.OrderID,
+		PayURL:  payURL.String(),
+	}, nil
+}
+
 // QueryOrder queries the trade status via Alipay.
 func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
 	client, err := a.getClient()
@@ -209,10 +267,11 @@ func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 	}
 
 	return &payment.QueryOrderResponse{
-		TradeNo: result.TradeNo,
-		Status:  status,
-		Amount:  amount,
-		PaidAt:  result.SendPayDate,
+		TradeNo:  result.TradeNo,
+		Status:   status,
+		Amount:   amount,
+		PaidAt:   result.SendPayDate,
+		Metadata: a.MerchantIdentityMetadata(),
 	}, nil
 }
 
@@ -243,12 +302,21 @@ func (a *Alipay) VerifyNotification(ctx context.Context, rawBody string, _ map[s
 		return nil, fmt.Errorf("alipay parse notification amount %q: %w", notification.TotalAmount, err)
 	}
 
+	metadata := a.MerchantIdentityMetadata()
+	if appID := strings.TrimSpace(notification.AppId); appID != "" {
+		if metadata == nil {
+			metadata = map[string]string{}
+		}
+		metadata["app_id"] = appID
+	}
+
 	return &payment.PaymentNotification{
-		TradeNo: notification.TradeNo,
-		OrderID: notification.OutTradeNo,
-		Amount:  amount,
-		Status:  status,
-		RawData: rawBody,
+		TradeNo:  notification.TradeNo,
+		OrderID:  notification.OutTradeNo,
+		Amount:   amount,
+		Status:   status,
+		RawData:  rawBody,
+		Metadata: metadata,
 	}, nil
 }
 
@@ -311,6 +379,7 @@ func isTradeNotExist(err error) bool {
 
 // Ensure interface compliance.
 var (
-	_ payment.Provider           = (*Alipay)(nil)
-	_ payment.CancelableProvider = (*Alipay)(nil)
+	_ payment.Provider                 = (*Alipay)(nil)
+	_ payment.CancelableProvider       = (*Alipay)(nil)
+	_ payment.MerchantIdentityProvider = (*Alipay)(nil)
 )
