@@ -62,7 +62,6 @@ func TestNewAlipay(t *testing.T) {
 		"privateKey": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...",
 	}
 
-	// helper to clone and override config fields
 	withOverride := func(overrides map[string]string) map[string]string {
 		cfg := make(map[string]string, len(validConfig))
 		for k, v := range validConfig {
@@ -143,5 +142,21 @@ func TestAlipayMerchantIdentityMetadata(t *testing.T) {
 	metadata := provider.MerchantIdentityMetadata()
 	if metadata["app_id"] != "2021001234567890" {
 		t.Fatalf("app_id = %q, want %q", metadata["app_id"], "2021001234567890")
+	}
+}
+
+func TestParseAlipayAmount(t *testing.T) {
+	t.Parallel()
+
+	amount, err := parseAlipayAmount("", "88.00", "77.00")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if amount != 88 {
+		t.Fatalf("amount = %v, want 88", amount)
+	}
+
+	if _, err := parseAlipayAmount("", "not-a-number"); err == nil {
+		t.Fatal("expected error when no valid amount field exists")
 	}
 }

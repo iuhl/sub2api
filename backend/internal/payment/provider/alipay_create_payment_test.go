@@ -106,7 +106,10 @@ func TestAlipayCreatePaymentDesktopReturnsQRCodeAndPayURL(t *testing.T) {
 
 	stub := &stubAlipayPaymentGateway{
 		pageURL:       mustParseURL(t, "https://pay.example.test/desktop"),
-		precreateResp: &alipay.TradePreCreateRsp{QRCode: "alipay://scan/desktop-qr"},
+		precreateResp: &alipay.TradePreCreateRsp{
+			Error:  alipay.Error{Code: alipay.CodeSuccess},
+			QRCode: "alipay://scan/desktop-qr",
+		},
 	}
 	p := &Alipay{
 		config: map[string]string{
@@ -170,8 +173,8 @@ func TestAlipayCreatePaymentDesktopReturnsQRCodeAndPayURL(t *testing.T) {
 	if stub.precreateParam.Subject != "Desktop order" {
 		t.Fatalf("precreate Subject = %q, want %q", stub.precreateParam.Subject, "Desktop order")
 	}
-	if stub.precreateParam.ProductCode != alipayProductCodePrePay {
-		t.Fatalf("precreate ProductCode = %q, want %q", stub.precreateParam.ProductCode, alipayProductCodePrePay)
+	if stub.precreateParam.ProductCode != alipayProductCodePreCreate {
+		t.Fatalf("precreate ProductCode = %q, want %q", stub.precreateParam.ProductCode, alipayProductCodePreCreate)
 	}
 	if stub.precreateParam.NotifyURL != "https://notify.example.test/request" {
 		t.Fatalf("precreate NotifyURL = %q, want %q", stub.precreateParam.NotifyURL, "https://notify.example.test/request")
@@ -181,7 +184,7 @@ func TestAlipayCreatePaymentDesktopReturnsQRCodeAndPayURL(t *testing.T) {
 	}
 }
 
-func TestAlipayCreatePaymentDesktopReturnsErrorWhenPrecreateFails(t *testing.T) {
+func TestAlipayCreatePaymentDesktopFallsBackToPayURLWhenPrecreateFails(t *testing.T) {
 	t.Parallel()
 
 	stub := &stubAlipayPaymentGateway{
@@ -196,7 +199,7 @@ func TestAlipayCreatePaymentDesktopReturnsErrorWhenPrecreateFails(t *testing.T) 
 		paymentGateway: stub,
 	}
 
-	_, err := p.CreatePayment(context.Background(), payment.CreatePaymentRequest{
+	got, err := p.CreatePayment(context.Background(), payment.CreatePaymentRequest{
 		OrderID:   "order-desktop-err",
 		Amount:    "88.80",
 		Subject:   "Desktop order",
@@ -204,16 +207,19 @@ func TestAlipayCreatePaymentDesktopReturnsErrorWhenPrecreateFails(t *testing.T) 
 		ReturnURL: "https://return.example.test/request",
 		IsMobile:  false,
 	})
-	if err == nil {
-		t.Fatal("CreatePayment() error = nil, want non-nil")
-	}
-	if err.Error() != "alipay TradePreCreate: precreate unavailable" {
-		t.Fatalf("CreatePayment() error = %q, want %q", err.Error(), "alipay TradePreCreate: precreate unavailable")
+	if err != nil {
+		t.Fatalf("CreatePayment() error = %v", err)
 	}
 	if stub.precreateParam == nil {
 		t.Fatal("TradePreCreate was not called")
 	}
-	if stub.precreateParam.ProductCode != alipayProductCodePrePay {
-		t.Fatalf("precreate ProductCode = %q, want %q", stub.precreateParam.ProductCode, alipayProductCodePrePay)
+	if stub.precreateParam.ProductCode != alipayProductCodePreCreate {
+		t.Fatalf("precreate ProductCode = %q, want %q", stub.precreateParam.ProductCode, alipayProductCodePreCreate)
+	}
+	if got.PayURL != "https://pay.example.test/desktop" {
+		t.Fatalf("PayURL = %q, want %q", got.PayURL, "https://pay.example.test/desktop")
+	}
+	if got.QRCode != "" {
+		t.Fatalf("QRCode = %q, want empty", got.QRCode)
 	}
 }

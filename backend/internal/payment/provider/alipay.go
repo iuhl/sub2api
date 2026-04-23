@@ -15,9 +15,9 @@ import (
 
 // Alipay product codes.
 const (
-	alipayProductCodePagePay = "FAST_INSTANT_TRADE_PAY"
-	alipayProductCodePrePay  = "FACE_TO_FACE_PAYMENT"
-	alipayProductCodeWapPay  = "QUICK_WAP_WAY"
+	alipayProductCodePreCreate = "FACE_TO_FACE_PAYMENT"
+	alipayProductCodeWapPay    = "QUICK_WAP_WAY"
+	alipayProductCodePagePay   = "FAST_INSTANT_TRADE_PAY"
 )
 
 // Alipay response constants.
@@ -105,11 +105,12 @@ func (a *Alipay) MerchantIdentityMetadata() map[string]string {
 	return map[string]string{"app_id": appID}
 }
 
-// CreatePayment creates an Alipay payment flow:
-//   - Mobile (H5): alipay.trade.wap.pay — returns a URL the browser jumps to.
-//   - PC: returns both an alipay.trade.page.pay redirect URL and an
-//     alipay.trade.precreate QR payload, so the client can render a real
-//     scan-to-pay QR code instead of encoding the redirect URL itself.
+// CreatePayment creates an Alipay payment using the following routing:
+//   - Mobile (H5): alipay.trade.wap.pay — browser redirect into Alipay.
+//   - Desktop: use alipay.trade.page.pay as the guaranteed entry point, then try
+//     alipay.trade.precreate to enrich the response with a real QR payload.
+//   - Desktop fallback: if precreate is unavailable, still return pay_url so the
+//     client can continue the payment flow by reopening the payment page.
 func (a *Alipay) CreatePayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	gateway, err := a.getPaymentGateway()
 	if err != nil {
@@ -168,16 +169,12 @@ func (a *Alipay) createDesktopTrade(ctx context.Context, gateway alipayPaymentGa
 	precreateParam.OutTradeNo = req.OrderID
 	precreateParam.TotalAmount = req.Amount
 	precreateParam.Subject = req.Subject
-	precreateParam.ProductCode = alipayProductCodePrePay
+	precreateParam.ProductCode = alipayProductCodePreCreate
 	precreateParam.NotifyURL = notifyURL
 
 	precreateResp, err := gateway.TradePreCreate(ctx, precreateParam)
-	if err != nil {
-		return nil, fmt.Errorf("alipay TradePreCreate: %w", err)
-	}
-
 	qrCode := ""
-	if precreateResp != nil {
+	if err == nil && precreateResp != nil && !precreateResp.IsFailure() && strings.TrimSpace(precreateResp.QRCode) != "" {
 		qrCode = precreateResp.QRCode
 	}
 
@@ -216,7 +213,15 @@ func (a *Alipay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Query
 
 	amount, err := strconv.ParseFloat(result.TotalAmount, 64)
 	if err != nil {
-		return nil, fmt.Errorf("alipay parse amount %q: %w", result.TotalAmount, err)
+		amount, err = parseAlipayAmount(
+			result.TotalAmount,
+			result.ReceiptAmount,
+			result.BuyerPayAmount,
+			result.InvoiceAmount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("alipay parse amount: %w", err)
+		}
 	}
 
 	return &payment.QueryOrderResponse{
@@ -252,7 +257,14 @@ func (a *Alipay) VerifyNotification(ctx context.Context, rawBody string, _ map[s
 
 	amount, err := strconv.ParseFloat(notification.TotalAmount, 64)
 	if err != nil {
-		return nil, fmt.Errorf("alipay parse notification amount %q: %w", notification.TotalAmount, err)
+		amount, err = parseAlipayAmount(
+			notification.TotalAmount,
+			notification.ReceiptAmount,
+			notification.BuyerPayAmount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("alipay parse notification amount: %w", err)
+		}
 	}
 
 	metadata := a.MerchantIdentityMetadata()
@@ -328,6 +340,20 @@ func isTradeNotExist(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), alipayErrTradeNotExist)
+}
+
+func parseAlipayAmount(values ...string) (float64, error) {
+	for _, raw := range values {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		amount, err := strconv.ParseFloat(raw, 64)
+		if err == nil {
+			return amount, nil
+		}
+	}
+	return 0, fmt.Errorf("no valid amount field")
 }
 
 // Ensure interface compliance.
